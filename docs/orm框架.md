@@ -93,7 +93,118 @@ ORM：    业务代码 → SQL 构造与结果映射 → database/sql → 数据
 
 写操作需要在事务提交后删除或更新相关缓存。缓存设计的难点是缓存键、过期时间和数据一致性，而不是简单地读取和写入缓存。
 
-## 2. 学习要点
+## 2. SELECT 起步
+
+### 2.1 GORM 如何构造 SQL
+
+GORM 中主要涉及 `Builder`、`Expression`、`Clause` 和 `Interface` 四个抽象。核心思路是将 SQL 的不同部分分别构造，最后再拼接成完整语句。
+
+```text
+SELECT 部分 + FROM 部分 + WHERE 部分 + 其他子句 → 完整 SQL
+```
+
+当前项目也采用类似思路：`Selector` 负责组织 SELECT 查询，`Predicate` 表示查询条件，`BuildExpression` 递归构造条件表达式。
+
+### 2.2 Builder 模式
+
+Builder（建造者）模式将复杂对象的构造过程拆成多个步骤，使调用方不必一次提供全部参数，而是逐步设置需要的部分，最后统一生成目标对象。
+
+它适合具有以下特点的对象：
+
+- 构造步骤较多。
+- 包含大量可选参数。
+- 不同参数之间存在组合关系。
+- 希望使用链式 API 提高可读性。
+
+SQL 正好符合这些特点。一条 SELECT 语句可能包含 `FROM`、`WHERE`、`GROUP BY`、`ORDER BY` 和 `LIMIT` 等部分，而且多数部分都是可选的。
+
+```text
+设置查询模型
+    ↓
+添加 FROM、WHERE 等查询条件
+    ↓
+Builder 保存构造过程中的状态
+    ↓
+调用 Build 统一生成 SQL 和参数
+```
+
+在当前项目中，各部分的职责是：
+
+| 组件 | 职责 |
+| --- | --- |
+| `Selector[T]` | Builder，保存表名和查询条件等状态 |
+| `From`、`Where` | 分步骤设置查询内容，并返回 Builder 自身 |
+| `Predicate` | 描述 `WHERE` 中的条件表达式 |
+| `Build` | 将已保存的状态组装成最终的 `Query` |
+| `Query` | 最终产物，包含 SQL 和参数 |
+
+```go
+query, err := (&Selector[TestModel]{}).
+	From("users").
+	Where(C("Age").Eq(18)).
+	Build()
+```
+
+生成的结果类似于：
+
+```go
+&Query{
+	SQL:  "SELECT * FROM users WHERE `Age` = ?;",
+	Args: []any{18},
+}
+```
+
+这种设计将“如何表达查询”和“如何拼接 SQL”分离：调用方负责描述查询意图，Builder 负责处理拼接顺序、占位符和参数收集。以后增加 `OrderBy`、`Limit` 等能力时，只需为 Builder 增加新的构造步骤。
+
+需要注意，链式调用不是 Builder 模式的必要条件，只是一种常见写法。Builder 模式的关键是逐步收集构造信息，最后通过 `Build` 生成完整对象。
+
+### 2.3 Where 多条件合并
+
+一次向 `Where` 传入多个条件时，循环会将它们依次用 `AND` 连接：
+
+```go
+p := s.where[0]
+for i := 1; i < len(s.where); i++ {
+	p = p.And(s.where[i])
+}
+```
+
+例如：
+
+```go
+Where(
+	C("Age").Eq(18),
+	C("id").Eq("0223"),
+)
+```
+
+当 `len(s.where) >= 2` 时循环才会执行，最终生成：
+
+```sql
+WHERE (`Age` = ?) AND (`id` = ?)
+```
+
+如果使用 `Where(p1.And(p2))`，传给 `Where` 的只有一个已经组合好的条件，因此不会进入循环。
+
+### 2.4 泛型的作用
+
+ORM 使用泛型可以约束传入的模型类型和返回值类型，减少类型断言，提高类型安全性。例如 `Selector[TestModel]` 可以明确查询对应的模型是 `TestModel`。
+
+### 2.5 SELECT 语句顺序
+
+面试中可能需要手写 SQL，应记住 SELECT 常见子句的书写顺序：
+
+```sql
+SELECT ...
+FROM ...
+WHERE ...
+GROUP BY ...
+HAVING ...
+ORDER BY ...
+LIMIT ...;
+```
+
+## 3. 学习要点
 
 后续实现 ORM 框架时，可以重点学习：
 
