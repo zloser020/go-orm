@@ -3,6 +3,7 @@ package orm
 import (
 	"orm/internal/errs"
 	"reflect"
+	"sync"
 	"unicode"
 )
 
@@ -17,6 +18,9 @@ type field struct {
 
 // registry 代表的是元数据的注册中心
 type registry struct {
+	// 读多写少 使用读写锁
+	lock sync.RWMutex
+
 	models map[reflect.Type]*model
 }
 
@@ -28,15 +32,25 @@ func newRegistry() *registry {
 
 func (r *registry) Get(val any) (*model, error) {
 	typ := reflect.TypeOf(val)
+
+	r.lock.RLock()
 	m, ok := r.models[typ]
-	if !ok {
-		var err error
-		m, err = r.parseModel(val)
-		if err != nil {
-			return nil, err
-		}
-		r.models[typ] = m
+	r.lock.RUnlock()
+	if ok {
+		return m, nil
 	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	m, ok = r.models[typ]
+	if ok {
+		return m, nil
+	}
+	m, err := r.parseModel(val)
+	if err != nil {
+		return nil, err
+	}
+	r.models[typ] = m
 	return m, nil
 }
 
