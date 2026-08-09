@@ -19,40 +19,57 @@ type field struct {
 // registry 代表的是元数据的注册中心
 type registry struct {
 	// 读多写少 使用读写锁
-	lock sync.RWMutex
+	// lock sync.RWMutex
+	// models map[reflect.Type]*model
 
-	models map[reflect.Type]*model
+	// 使用sync.map
+	models sync.Map
 }
 
 func newRegistry() *registry {
-	return &registry{
-		models: make(map[reflect.Type]*model, 64),
-	}
+	return &registry{}
 }
 
 func (r *registry) Get(val any) (*model, error) {
 	typ := reflect.TypeOf(val)
-
-	r.lock.RLock()
-	m, ok := r.models[typ]
-	r.lock.RUnlock()
+	m, ok := r.models.Load(typ)
 	if ok {
-		return m, nil
+		return m.(*model), nil
 	}
-
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	m, ok = r.models[typ]
-	if ok {
-		return m, nil
-	}
-	m, err := r.parseModel(val)
+	var err error
+	m, err = r.parseModel(val)
 	if err != nil {
 		return nil, err
 	}
-	r.models[typ] = m
-	return m, nil
+	// 可能存在覆盖，影响有限
+	r.models.Store(typ, m)
+	return m.(*model), nil
 }
+
+// 使用读写锁
+//func (r *registry) Get(val any) (*model, error) {
+//	typ := reflect.TypeOf(val)
+//
+//	r.lock.RLock()
+//	m, ok := r.models[typ]
+//	r.lock.RUnlock()
+//	if ok {
+//		return m, nil
+//	}
+//
+//	r.lock.Lock()
+//	defer r.lock.Unlock()
+//	m, ok = r.models[typ]
+//	if ok {
+//		return m, nil
+//	}
+//	m, err := r.parseModel(val)
+//	if err != nil {
+//		return nil, err
+//	}
+//	r.models[typ] = m
+//	return m, nil
+//}
 
 // 限制只支持一级指针
 func (r *registry) parseModel(entity any) (*model, error) {
