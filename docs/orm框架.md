@@ -206,6 +206,8 @@ LIMIT ...;
 
 ## 3. 反射：获取并调用方法
 
+### 3.1 方法接收者
+
 使用反射遍历方法时，需要注意方法接收者：
 
 - 输入是结构体值 `T`，只能获取值接收者 `func (t T) Method()` 的方法。
@@ -226,6 +228,78 @@ func (u *User) ChangeName(name string)
 ```
 
 传入 `User` 时只能找到 `GetAge`；传入 `*User` 时可以同时找到 `GetAge` 和 `ChangeName`。`ChangeName` 的反射输入参数依次为接收者 `*User` 和方法参数 `string`。
+
+### 3.2 反射编程技巧
+
+- 读写具体数据使用 `reflect.Value`，读取类型信息使用 `reflect.Type`。
+- `T` 和 `*T` 在反射中是两种类型，操作前要确认是否为指针；通常使用 `Elem()` 获取指针指向的值或类型。
+- 指针类型主要用于判断指向类型和获取指针方法集；分析结构体字段时，一般操作其 `Elem()`。
+- 反射 API 经常在类型不匹配、值不可修改或操作不支持时触发 panic，因此需要充分测试，并在调用前使用 `Kind`、`CanSet` 等方法检查。
+- 数组和切片分别对应 `reflect.Array` 和 `reflect.Slice`，不能当成同一种类型判断。
+- 字段和方法需要使用不同的反射 API，例如 `Field` 与 `Method`。
+
+#### Value、Type 与原始对象的关系
+
+```text
+&user
+  └── reflect.ValueOf(&user)       指针 Value
+          ├── Type()               → *User 的 Type
+          └── Elem()               → User 的 Value，可读写字段
+                  └── Type()       → User 的 Type
+
+reflect.TypeOf(&user)              *User 的 Type
+  └── Elem()                       → User 的 Type
+```
+
+核心关系如下：
+
+- `reflect.ValueOf` 得到值的反射表示，用于读取或修改数据。
+- `reflect.TypeOf` 得到类型的反射表示，只描述类型信息。
+- `Value.Type()` 可以从 Value 获取对应的 Type。
+- 对指针调用 `Elem()`，可以从 `*User` 进入其指向的 `User`。
+- 若要修改结构体字段，应传入 `&user`，再通过 `ValueOf(&user).Elem()` 获得可设置的结构体 Value。
+
+### 3.3 Map 遍历顺序
+
+Go 的 map 是无序的，`MapRange` 和 `MapKeys` 都不保证返回顺序。因此测试 map 遍历结果时，不应直接比较切片顺序，而应比较完整的键值关系；如果业务需要固定顺序，则必须先对 key 排序。
+
+### 3.4 反射面试要点
+
+#### 什么是反射
+
+反射是程序在运行期间描述类型和值，并间接读取或操作对象的能力。Go 主要通过 `reflect.Type` 获取类型信息，通过 `reflect.Value` 操作具体值。
+
+#### 反射有哪些使用场景
+
+反射常用于无法在编译期确定具体类型的通用框架，例如：
+
+- ORM 的模型与数据库字段映射。
+- JSON 等序列化和反序列化。
+- 依赖注入和配置解析。
+- Web 框架中的参数绑定。
+
+#### 能否通过反射修改方法
+
+不能。Go 的反射 API 可以查找和调用方法，但不能修改方法实现，Go runtime 也没有提供相应接口。
+
+#### 什么样的字段可以被反射修改
+
+可以使用 `CanSet()` 判断值能否修改。通常需要传入对象指针，再通过 `Elem()` 得到可寻址的结构体值；字段还必须是可设置的导出字段。
+
+```go
+val := reflect.ValueOf(&user).Elem()
+field := val.FieldByName("Name")
+if field.CanSet() {
+	field.SetString("Tom")
+}
+```
+
+直接传入结构体值通常只能读取，不能修改：
+
+```text
+reflect.ValueOf(user)         → 通常不可设置
+reflect.ValueOf(&user).Elem() → 可寻址，再通过 CanSet 判断
+```
 
 ## 4. 学习要点
 

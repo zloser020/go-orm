@@ -2,6 +2,7 @@ package orm
 
 import (
 	"database/sql"
+	"orm/internal/errs"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ func TestSelector_Build(t *testing.T) {
 			name:    "select",
 			builder: &Selector[TestModel]{},
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel`;",
+				SQL:  "SELECT * FROM `test_model`;",
 				Args: nil,
 			},
 		},
@@ -42,7 +43,7 @@ func TestSelector_Build(t *testing.T) {
 			name:    "empty_from",
 			builder: (&Selector[TestModel]{}).From(""),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel`;",
+				SQL:  "SELECT * FROM `test_model`;",
 				Args: nil,
 			},
 		},
@@ -50,7 +51,7 @@ func TestSelector_Build(t *testing.T) {
 			name:    "where",
 			builder: (&Selector[TestModel]{}).Where(C("Age").Eq(18)),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel` WHERE `Age` = ?;",
+				SQL:  "SELECT * FROM `test_model` WHERE `age` = ?;",
 				Args: []any{18},
 			},
 		},
@@ -58,33 +59,38 @@ func TestSelector_Build(t *testing.T) {
 			name:    "not",
 			builder: (&Selector[TestModel]{}).Where(Not(C("Age").Eq(18))),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel` WHERE  NOT (`Age` = ?);",
+				SQL:  "SELECT * FROM `test_model` WHERE  NOT (`age` = ?);",
 				Args: []any{18},
 			},
 		},
 		{
 			name:    "and",
-			builder: (&Selector[TestModel]{}).Where(C("id").Eq("0223").And(C("Age").Eq(18))),
+			builder: (&Selector[TestModel]{}).Where(C("Id").Eq("0223").And(C("Age").Eq(18))),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel` WHERE (`id` = ?) AND (`Age` = ?);",
+				SQL:  "SELECT * FROM `test_model` WHERE (`id` = ?) AND (`age` = ?);",
 				Args: []any{"0223", 18},
 			},
 		},
 		{
 			name:    "or",
-			builder: (&Selector[TestModel]{}).Where(C("id").Eq("0223").Or(C("Age").Eq(18))),
+			builder: (&Selector[TestModel]{}).Where(C("Id").Eq("0223").Or(C("Age").Eq(18))),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel` WHERE (`id` = ?) OR (`Age` = ?);",
+				SQL:  "SELECT * FROM `test_model` WHERE (`id` = ?) OR (`age` = ?);",
 				Args: []any{"0223", 18},
 			},
 		},
 		{
 			name:    "and",
-			builder: (&Selector[TestModel]{}).Where(C("id").Eq("0223"), (C("Age").Eq(18))),
+			builder: (&Selector[TestModel]{}).Where(C("Id").Eq("0223"), (C("Age").Eq(18))),
 			wantQuery: &Query{
-				SQL:  "SELECT * FROM `TestModel` WHERE (`id` = ?) AND (`Age` = ?);",
+				SQL:  "SELECT * FROM `test_model` WHERE (`id` = ?) AND (`age` = ?);",
 				Args: []any{"0223", 18},
 			},
+		},
+		{
+			name:    "invalid column",
+			builder: (&Selector[TestModel]{}).Where(C("level").Eq("0")),
+			wantErr: errs.NewErrUnkonwnField("level"),
 		},
 	}
 

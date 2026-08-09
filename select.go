@@ -3,12 +3,13 @@ package orm
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"orm/internal/errs"
 	"strings"
 )
 
 type Selector[T any] struct {
 	tableName string
+	model     *model
 	where     []Predicate
 	sb        *strings.Builder
 	args      []any
@@ -17,13 +18,16 @@ type Selector[T any] struct {
 
 func (s *Selector[T]) Build() (*Query, error) {
 	s.sb = &strings.Builder{}
+	var err error
+	s.model, err = parseModel(new(T))
+	if err != nil {
+		return nil, err
+	}
 	sb := s.sb
 	sb.WriteString("SELECT * FROM ")
 	if s.tableName == "" {
-		var t T
-		typ := reflect.TypeOf(t)
 		sb.WriteByte('`')
-		sb.WriteString(typ.Name())
+		sb.WriteString(s.model.tableName)
 		sb.WriteByte('`')
 	} else {
 		sb.WriteString(s.tableName)
@@ -80,8 +84,13 @@ func (s *Selector[T]) BuildExpression(expr Expression) error {
 		}
 
 	case Column:
+		// 字段校验
+		fd, ok := s.model.fields[expr.name]
+		if !ok {
+			return errs.NewErrUnkonwnField(expr.name)
+		}
 		s.sb.WriteByte('`')
-		s.sb.WriteString(expr.name)
+		s.sb.WriteString(fd.colName)
 		s.sb.WriteByte('`')
 	case value:
 		s.sb.WriteByte('?')
