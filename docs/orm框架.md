@@ -204,7 +204,30 @@ ORDER BY ...
 LIMIT ...;
 ```
 
-## 3. 学习要点
+## 3. 反射：获取并调用方法
+
+使用反射遍历方法时，需要注意方法接收者：
+
+- 输入是结构体值 `T`，只能获取值接收者 `func (t T) Method()` 的方法。
+- 输入是结构体指针 `*T`，可以获取值接收者和指针接收者的方法。
+- 通过 `reflect.Type.Method` 得到的方法函数，其第一个输入参数永远是接收者本身，后面才是方法声明的参数。
+- `NumMethod` 和 `Method` 只能获取导出方法。
+
+```text
+输入 User  → 获取 User 的值接收者方法
+输入 *User → 获取 User 和 *User 的方法
+```
+
+例如：
+
+```go
+func (u User) GetAge() int
+func (u *User) ChangeName(name string)
+```
+
+传入 `User` 时只能找到 `GetAge`；传入 `*User` 时可以同时找到 `GetAge` 和 `ChangeName`。`ChangeName` 的反射输入参数依次为接收者 `*User` 和方法参数 `string`。
+
+## 4. 学习要点
 
 后续实现 ORM 框架时，可以重点学习：
 
