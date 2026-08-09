@@ -27,31 +27,84 @@ func Test_parseModel(t *testing.T) {
 			wantModel: &model{
 				tableName: "test_model",
 				fields: map[string]*field{
-					"id": {
+					"Id": {
 						colName: "id",
 					},
 					"FirstName": {
-						colName: "FirstName",
+						colName: "first_name",
 					},
 					"LastName": {
-						colName: "LastName",
+						colName: "last_name",
 					},
 					"Age": {
-						colName: "Age",
+						colName: "age",
 					},
 				},
 			},
 		},
 	}
 
+	r := &registry{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := parseModel(tt.entity)
+			res, err := r.parseModel(tt.entity)
 			assert.Equal(t, tt.wantErr, err)
-			if tt.wantErr == nil {
+			if tt.wantErr != nil {
 				return
 			}
 			assert.Equal(t, tt.wantModel, res)
+		})
+	}
+}
+
+func TestRegistry_get(t *testing.T) {
+	tests := []struct {
+		name      string
+		entity    any
+		wantErr   error
+		wantModel *model
+		cacheSize int
+	}{
+		{
+			name:    "struct",
+			entity:  TestModel{},
+			wantErr: errs.ErrPointerOnly,
+		},
+		{
+			name:    "test model pointer",
+			entity:  &TestModel{},
+			wantErr: nil,
+			wantModel: &model{
+				tableName: "test_model",
+				fields: map[string]*field{
+					"Id": {
+						colName: "id",
+					},
+					"FirstName": {
+						colName: "first_name",
+					},
+					"LastName": {
+						colName: "last_name",
+					},
+					"Age": {
+						colName: "age",
+					},
+				},
+			},
+			cacheSize: 1,
+		},
+	}
+
+	r := newRegistry()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := r.Get(tt.entity)
+			assert.Equal(t, tt.wantErr, err)
+			if tt.wantErr != nil {
+				return
+			}
+			assert.Equal(t, tt.wantModel, res)
+			assert.Equal(t, tt.cacheSize, len(r.models))
 		})
 	}
 }

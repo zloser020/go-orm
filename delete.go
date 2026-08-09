@@ -9,12 +9,22 @@ type Deleter[T any] struct {
 	tableName string
 	where     []Predicate
 	expr      Expression
+
+	db *DB
+}
+
+func NewDeleter[T any](db *DB) *Deleter[T] {
+	return &Deleter[T]{
+		builder: builder{
+			sb: &strings.Builder{},
+		},
+		db: db,
+	}
 }
 
 func (d *Deleter[T]) Build() (*Query, error) {
-	d.sb = &strings.Builder{}
 	var err error
-	d.model, err = parseModel(new(T))
+	d.model, err = d.db.registry.Get(new(T))
 	if err != nil {
 		return nil, err
 	}

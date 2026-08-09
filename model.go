@@ -15,8 +15,33 @@ type field struct {
 	colName string
 }
 
+// registry 代表的是元数据的注册中心
+type registry struct {
+	models map[reflect.Type]*model
+}
+
+func newRegistry() *registry {
+	return &registry{
+		models: make(map[reflect.Type]*model, 64),
+	}
+}
+
+func (r *registry) Get(val any) (*model, error) {
+	typ := reflect.TypeOf(val)
+	m, ok := r.models[typ]
+	if !ok {
+		var err error
+		m, err = r.parseModel(val)
+		if err != nil {
+			return nil, err
+		}
+		r.models[typ] = m
+	}
+	return m, nil
+}
+
 // 限制只支持一级指针
-func parseModel(entity any) (*model, error) {
+func (r *registry) parseModel(entity any) (*model, error) {
 	typ := reflect.TypeOf(entity)
 
 	// 只支持一级指针

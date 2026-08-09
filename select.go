@@ -10,12 +10,22 @@ type Selector[T any] struct {
 	tableName string
 	where     []Predicate
 	expr      Expression
+
+	db *DB
+}
+
+func NewSelector[T any](db *DB) *Selector[T] {
+	return &Selector[T]{
+		builder: builder{
+			sb: &strings.Builder{},
+		},
+		db: db,
+	}
 }
 
 func (s *Selector[T]) Build() (*Query, error) {
-	s.sb = &strings.Builder{}
 	var err error
-	s.model, err = parseModel(new(T))
+	s.model, err = s.db.registry.Get(new(T))
 	if err != nil {
 		return nil, err
 	}

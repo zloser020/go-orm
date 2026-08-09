@@ -4,9 +4,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDeleter_Build(t *testing.T) {
+	db, err := NewDB()
+	require.NoError(t, err)
+
 	testCases := []struct {
 		name    string
 		builder QueryBuilder
@@ -15,7 +19,7 @@ func TestDeleter_Build(t *testing.T) {
 	}{
 		{
 			name:    "delete",
-			builder: &Deleter[TestModel]{},
+			builder: NewDeleter[TestModel](db),
 			wantErr: nil,
 			wantRes: &Query{
 				SQL: "DELETE FROM `test_model`;",
@@ -23,7 +27,7 @@ func TestDeleter_Build(t *testing.T) {
 		},
 		{
 			name:    "where",
-			builder: (&Deleter[TestModel]{}).Where(C("Id").Eq("0223")),
+			builder: NewDeleter[TestModel](db).Where(C("Id").Eq("0223")),
 			wantErr: nil,
 			wantRes: &Query{
 				SQL:  "DELETE FROM `test_model` WHERE `id` = ?;",
