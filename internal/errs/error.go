@@ -17,3 +17,7 @@ func NewErrUnsupportedExpression(expr any) error {
 func NewErrUnkonwnField(name string) error {
 	return fmt.Errorf("Unkonwn field name: %v", name)
 }
+
+func NewErrInvalidTagContent(pair string) error {
+	return fmt.Errorf("Invalid tag content: %v", pair)
+}

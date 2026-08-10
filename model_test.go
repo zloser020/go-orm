@@ -2,6 +2,7 @@ package orm
 
 import (
 	"orm/internal/errs"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,6 +94,69 @@ func TestRegistry_get(t *testing.T) {
 			},
 			cacheSize: 1,
 		},
+		{
+			name: "tag",
+			entity: func() any {
+				type TagTable struct {
+					FirstName string `orm:"column:first_name_t"`
+				}
+				return &TagTable{}
+			}(),
+			wantErr: nil,
+			wantModel: &model{
+				tableName: "tag_table",
+				fields: map[string]*field{
+					"FirstName": {
+						colName: "first_name_t",
+					},
+				},
+			},
+		},
+		{
+			name: "empty",
+			entity: func() any {
+				type TagTable struct {
+					FirstName string
+				}
+				return &TagTable{}
+			}(),
+			wantErr: nil,
+			wantModel: &model{
+				tableName: "tag_table",
+				fields: map[string]*field{
+					"FirstName": {
+						colName: "first_name",
+					},
+				},
+			},
+		},
+		{
+			name: "column only",
+			entity: func() any {
+				type TagTable struct {
+					FirstName string `orm:"column"`
+				}
+				return &TagTable{}
+			}(),
+			wantErr: errs.NewErrInvalidTagContent("column"),
+		},
+		{
+			name: "column",
+			entity: func() any {
+				type TagTable struct {
+					FirstName string `orm:"column:"`
+				}
+				return &TagTable{}
+			}(),
+			wantModel: &model{
+				tableName: "tag_table",
+				fields: map[string]*field{
+					"FirstName": {
+						colName: "first_name",
+					},
+				},
+			},
+		},
 	}
 
 	r := newRegistry()
@@ -104,7 +168,13 @@ func TestRegistry_get(t *testing.T) {
 				return
 			}
 			assert.Equal(t, tt.wantModel, res)
-			assert.Equal(t, tt.cacheSize, len(r.models))
+			typ := reflect.TypeOf(tt.entity)
+			cache, ok := r.models.Load(typ)
+			assert.True(t, ok)
+			if !ok {
+				return
+			}
+			assert.Equal(t, tt.wantModel, cache.(*model))
 		})
 	}
 }

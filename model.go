@@ -3,8 +3,13 @@ package orm
 import (
 	"orm/internal/errs"
 	"reflect"
+	"strings"
 	"sync"
 	"unicode"
+)
+
+const (
+	tagKeyColumn = "column"
 )
 
 type model struct {
@@ -84,14 +89,41 @@ func (r *registry) parseModel(entity any) (*model, error) {
 	fieldMap := make(map[string]*field, numFields)
 	for i := 0; i < numFields; i++ {
 		fd := typ.Field(i)
+		pair, err := r.parseTag(fd.Tag)
+		if err != nil {
+			return nil, err
+		}
+		colName := pair[tagKeyColumn]
+		if colName == "" {
+			colName = underscoreName(fd.Name)
+		}
 		fieldMap[fd.Name] = &field{
-			colName: underscoreName(fd.Name),
+			colName: colName,
 		}
 	}
 	return &model{
 		tableName: underscoreName(typ.Name()),
 		fields:    fieldMap,
 	}, nil
+}
+
+func (r *registry) parseTag(tag reflect.StructTag) (map[string]string, error) {
+	ormTag, ok := tag.Lookup("orm")
+	if !ok {
+		return map[string]string{}, nil
+	}
+	pairs := strings.Split(ormTag, ",")
+	result := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		segs := strings.Split(pair, ":")
+		if len(segs) != 2 {
+			return nil, errs.NewErrInvalidTagContent(pair)
+		}
+		key := segs[0]
+		val := segs[1]
+		result[key] = val
+	}
+	return result, nil
 }
 
 // underscoreName 驼峰转下划线
