@@ -101,8 +101,15 @@ func (r *registry) parseModel(entity any) (*model, error) {
 			colName: colName,
 		}
 	}
+	var tableName string
+	if tbl, ok := entity.(TableName); ok {
+		tableName = tbl.TableName()
+	}
+	if tableName == "" {
+		tableName = underscoreName(typ.Name())
+	}
 	return &model{
-		tableName: underscoreName(typ.Name()),
+		tableName: tableName,
 		fields:    fieldMap,
 	}, nil
 }

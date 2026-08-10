@@ -157,6 +157,18 @@ func TestRegistry_get(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:   "table name",
+			entity: &UserName{},
+			wantModel: &model{
+				tableName: "user_name_table",
+				fields: map[string]*field{
+					"FirstName": {
+						colName: "first_name",
+					},
+				},
+			},
+		},
 	}
 
 	r := newRegistry()
@@ -177,4 +189,12 @@ func TestRegistry_get(t *testing.T) {
 			assert.Equal(t, tt.wantModel, cache.(*model))
 		})
 	}
+}
+
+type UserName struct {
+	FirstName string `orm:"column:first_name"`
+}
+
+func (u *UserName) TableName() string {
+	return "user_name_table"
 }
