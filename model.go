@@ -12,12 +12,19 @@ const (
 	tagKeyColumn = "column"
 )
 
-type model struct {
-	tableName string
-	fields    map[string]*field
+type Registry interface {
+	Get(val any) (*Model, error)
+	Register(val any, opts ...ModelOption) (*Model, error)
 }
 
-type field struct {
+type Model struct {
+	tableName string
+	fields    map[string]*Field
+}
+
+type ModelOption func(*Model) error
+
+type Field struct {
 	colName string
 }
 
@@ -25,7 +32,7 @@ type field struct {
 type registry struct {
 	// 读多写少 使用读写锁
 	// lock sync.RWMutex
-	// models map[reflect.Type]*model
+	// models map[reflect.Type]*Model
 
 	// 使用sync.map
 	models sync.Map
@@ -35,24 +42,24 @@ func newRegistry() *registry {
 	return &registry{}
 }
 
-func (r *registry) Get(val any) (*model, error) {
+func (r *registry) Get(val any) (*Model, error) {
 	typ := reflect.TypeOf(val)
 	m, ok := r.models.Load(typ)
 	if ok {
-		return m.(*model), nil
+		return m.(*Model), nil
 	}
 	var err error
-	m, err = r.parseModel(val)
+	m, err = r.Registry(val)
 	if err != nil {
 		return nil, err
 	}
 	// 可能存在覆盖，影响有限
 	r.models.Store(typ, m)
-	return m.(*model), nil
+	return m.(*Model), nil
 }
 
 // 使用读写锁
-//func (r *registry) Get(val any) (*model, error) {
+//func (r *registry) Get(val any) (*Model, error) {
 //	typ := reflect.TypeOf(val)
 //
 //	r.lock.RLock()
@@ -68,7 +75,7 @@ func (r *registry) Get(val any) (*model, error) {
 //	if ok {
 //		return m, nil
 //	}
-//	m, err := r.parseModel(val)
+//	m, err := r.Registry(val)
 //	if err != nil {
 //		return nil, err
 //	}
@@ -77,18 +84,18 @@ func (r *registry) Get(val any) (*model, error) {
 //}
 
 // 限制只支持一级指针
-func (r *registry) parseModel(entity any) (*model, error) {
-	typ := reflect.TypeOf(entity)
+func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
+	Typ := reflect.TypeOf(entity)
 
 	// 只支持一级指针
-	if typ.Kind() != reflect.Ptr || typ.Elem().Kind() != reflect.Struct {
+	if Typ.Kind() != reflect.Ptr || Typ.Elem().Kind() != reflect.Struct {
 		return nil, errs.ErrPointerOnly
 	}
-	typ = typ.Elem()
-	numFields := typ.NumField()
-	fieldMap := make(map[string]*field, numFields)
+	elemType := Typ.Elem()
+	numFields := elemType.NumField()
+	fieldMap := make(map[string]*Field, numFields)
 	for i := 0; i < numFields; i++ {
-		fd := typ.Field(i)
+		fd := elemType.Field(i)
 		pair, err := r.parseTag(fd.Tag)
 		if err != nil {
 			return nil, err
@@ -97,7 +104,7 @@ func (r *registry) parseModel(entity any) (*model, error) {
 		if colName == "" {
 			colName = underscoreName(fd.Name)
 		}
-		fieldMap[fd.Name] = &field{
+		fieldMap[fd.Name] = &Field{
 			colName: colName,
 		}
 	}
@@ -106,12 +113,41 @@ func (r *registry) parseModel(entity any) (*model, error) {
 		tableName = tbl.TableName()
 	}
 	if tableName == "" {
-		tableName = underscoreName(typ.Name())
+		tableName = underscoreName(elemType.Name())
 	}
-	return &model{
+	res := &Model{
 		tableName: tableName,
 		fields:    fieldMap,
-	}, nil
+	}
+	for _, opt := range opts {
+		err := opt(res)
+		if err != nil {
+			return nil, err
+		}
+	}
+	r.models.Store(Typ, res)
+	return res, nil
+}
+
+func ModelWithTableName(tableName string) ModelOption {
+	return func(m *Model) error {
+		m.tableName = tableName
+		//if tableName == "" {
+		//	return err
+		//}
+		return nil
+	}
+}
+
+func ModelWithFieldName(field string, colName string) ModelOption {
+	return func(m *Model) error {
+		fd, ok := m.fields[field]
+		if !ok {
+			return errs.NewErrUnkonwnField(field)
+		}
+		fd.colName = colName
+		return nil
+	}
 }
 
 func (r *registry) parseTag(tag reflect.StructTag) (map[string]string, error) {

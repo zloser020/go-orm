@@ -9,7 +9,7 @@ import (
 type builder struct {
 	sb    *strings.Builder
 	args  []any
-	model *model
+	model *Model
 }
 
 func (b *builder) buildPredicates(ps []Predicate) error {

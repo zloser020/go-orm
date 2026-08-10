@@ -14,7 +14,7 @@ func Test_parseModel(t *testing.T) {
 		name      string
 		entity    any
 		wantErr   error
-		wantModel *model
+		wantModel *Model
 	}{
 		{
 			name:    "struct",
@@ -22,12 +22,12 @@ func Test_parseModel(t *testing.T) {
 			wantErr: errs.ErrPointerOnly,
 		},
 		{
-			name:    "test model pointer",
+			name:    "test Model pointer",
 			entity:  &TestModel{},
 			wantErr: nil,
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "test_model",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"Id": {
 						colName: "id",
 					},
@@ -48,7 +48,7 @@ func Test_parseModel(t *testing.T) {
 	r := &registry{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := r.parseModel(tt.entity)
+			res, err := r.Registry(tt.entity)
 			assert.Equal(t, tt.wantErr, err)
 			if tt.wantErr != nil {
 				return
@@ -63,7 +63,7 @@ func TestRegistry_get(t *testing.T) {
 		name      string
 		entity    any
 		wantErr   error
-		wantModel *model
+		wantModel *Model
 		cacheSize int
 	}{
 		{
@@ -72,12 +72,12 @@ func TestRegistry_get(t *testing.T) {
 			wantErr: errs.ErrPointerOnly,
 		},
 		{
-			name:    "test model pointer",
+			name:    "test Model pointer",
 			entity:  &TestModel{},
 			wantErr: nil,
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "test_model",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"Id": {
 						colName: "id",
 					},
@@ -103,9 +103,9 @@ func TestRegistry_get(t *testing.T) {
 				return &TagTable{}
 			}(),
 			wantErr: nil,
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"FirstName": {
 						colName: "first_name_t",
 					},
@@ -121,9 +121,9 @@ func TestRegistry_get(t *testing.T) {
 				return &TagTable{}
 			}(),
 			wantErr: nil,
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -148,9 +148,9 @@ func TestRegistry_get(t *testing.T) {
 				}
 				return &TagTable{}
 			}(),
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -160,9 +160,9 @@ func TestRegistry_get(t *testing.T) {
 		{
 			name:   "table name",
 			entity: &UserName{},
-			wantModel: &model{
+			wantModel: &Model{
 				tableName: "user_name_table",
-				fields: map[string]*field{
+				fields: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -186,7 +186,7 @@ func TestRegistry_get(t *testing.T) {
 			if !ok {
 				return
 			}
-			assert.Equal(t, tt.wantModel, cache.(*model))
+			assert.Equal(t, tt.wantModel, cache.(*Model))
 		})
 	}
 }
@@ -197,4 +197,18 @@ type UserName struct {
 
 func (u *UserName) TableName() string {
 	return "user_name_table"
+}
+
+func TestModelWithTableName(t *testing.T) {
+	r := newRegistry()
+	m, err := r.Registry(&TestModel{}, ModelWithTableName("user_name_table"))
+	assert.NoError(t, err)
+	assert.Equal(t, "user_name_table", m.tableName)
+}
+
+func TestModelWithFieldName(t *testing.T) {
+	r := newRegistry()
+	m, err := r.Registry(&UserName{}, ModelWithFieldName("FirstName", "first_name_a"))
+	assert.NoError(t, err)
+	assert.Equal(t, "first_name_a", m.fields["FirstName"].colName)
 }

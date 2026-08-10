@@ -288,9 +288,9 @@ Go 的 map 是无序的，`MapRange` 和 `MapKeys` 都不保证返回顺序。�
 
 ```go
 val := reflect.ValueOf(&user).Elem()
-field := val.FieldByName("Name")
-if field.CanSet() {
-	field.SetString("Tom")
+Field := val.FieldByName("Name")
+if Field.CanSet() {
+	Field.SetString("Tom")
 }
 ```
 
