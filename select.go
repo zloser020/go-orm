@@ -2,6 +2,8 @@ package orm
 
 import (
 	"context"
+	"orm/internal/errs"
+	"reflect"
 	"strings"
 )
 
@@ -66,9 +68,70 @@ func (s *Selector[T]) Where(ps ...Predicate) *Selector[T] {
 }
 
 func (s *Selector[T]) Get(ctx context.Context) (*T, error) {
-	panic("not implemented")
+	q, err := s.Build()
+	if err != nil {
+		return nil, err
+	}
+	db := s.db.db
+	rows, err := db.QueryContext(ctx, q.SQL, q.Args...)
+	if err != nil {
+		return nil, err
+	}
+
+	if !rows.Next() {
+		return nil, ErrNoRows
+	}
+
+	cs, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	tp := new(T)
+	vals := make([]any, len(cs))
+	valElem := make([]reflect.Value, len(cs))
+	for _, c := range cs {
+		fd, ok := s.model.columnMap[c]
+		if !ok {
+			return nil, errs.NewErrUnkonwnColumn(c)
+		}
+
+		val := reflect.New(fd.typ)
+		vals = append(vals, val.Interface())
+		valElem = append(valElem, val.Elem())
+
+	}
+
+	err = rows.Scan(vals...)
+	if err != nil {
+		return nil, err
+	}
+	tpValueElem := reflect.ValueOf(tp).Elem()
+	for i, c := range cs {
+		fd, ok := s.model.columnMap[c]
+		if !ok {
+			return nil, errs.NewErrUnkonwnColumn(c)
+		}
+
+		if fd.colName == c {
+			tpValueElem.FieldByName(fd.goName).Set(valElem[i])
+		}
+	}
+	return tp, nil
 }
 
 func (s *Selector[T]) GetMulti(ctx context.Context) ([]*T, error) {
-	panic("not implemented")
+	//q, err := s.Build()
+	//if err != nil {
+	//	return nil, err
+	//}
+	//db := s.db.db
+	//rows, err := db.QueryContext(ctx, q.SQL, q.Args...)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//for rows.Next() {
+	//
+	//}
+	panic("unreachable")
 }

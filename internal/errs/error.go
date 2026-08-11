@@ -8,6 +8,7 @@ import (
 var (
 	// 只支持一级指针
 	ErrPointerOnly = errors.New("Pointer Only")
+	ErrNoRows      = errors.New("No rows in result set")
 )
 
 func NewErrUnsupportedExpression(expr any) error {
@@ -16,6 +17,10 @@ func NewErrUnsupportedExpression(expr any) error {
 
 func NewErrUnkonwnField(name string) error {
 	return fmt.Errorf("Unkonwn field name: %v", name)
+}
+
+func NewErrUnkonwnColumn(name string) error {
+	return fmt.Errorf("Unkonwn column name: %v", name)
 }
 
 func NewErrInvalidTagContent(pair string) error {

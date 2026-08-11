@@ -4,12 +4,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDeleter_Build(t *testing.T) {
-	db, err := NewDB()
-	require.NoError(t, err)
+	db := memoryDB(t)
 
 	testCases := []struct {
 		name    string

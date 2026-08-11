@@ -27,7 +27,7 @@ func Test_parseModel(t *testing.T) {
 			wantErr: nil,
 			wantModel: &Model{
 				tableName: "test_model",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"Id": {
 						colName: "id",
 					},
@@ -53,7 +53,7 @@ func Test_parseModel(t *testing.T) {
 			if tt.wantErr != nil {
 				return
 			}
-			assert.Equal(t, tt.wantModel, res)
+			assertModelMetadata(t, tt.entity, tt.wantModel, res)
 		})
 	}
 }
@@ -77,7 +77,7 @@ func TestRegistry_get(t *testing.T) {
 			wantErr: nil,
 			wantModel: &Model{
 				tableName: "test_model",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"Id": {
 						colName: "id",
 					},
@@ -105,7 +105,7 @@ func TestRegistry_get(t *testing.T) {
 			wantErr: nil,
 			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"FirstName": {
 						colName: "first_name_t",
 					},
@@ -123,7 +123,7 @@ func TestRegistry_get(t *testing.T) {
 			wantErr: nil,
 			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -150,7 +150,7 @@ func TestRegistry_get(t *testing.T) {
 			}(),
 			wantModel: &Model{
 				tableName: "tag_table",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -162,7 +162,7 @@ func TestRegistry_get(t *testing.T) {
 			entity: &UserName{},
 			wantModel: &Model{
 				tableName: "user_name_table",
-				fields: map[string]*Field{
+				fieldMap: map[string]*Field{
 					"FirstName": {
 						colName: "first_name",
 					},
@@ -179,15 +179,48 @@ func TestRegistry_get(t *testing.T) {
 			if tt.wantErr != nil {
 				return
 			}
-			assert.Equal(t, tt.wantModel, res)
+			assertModelMetadata(t, tt.entity, tt.wantModel, res)
 			typ := reflect.TypeOf(tt.entity)
 			cache, ok := r.models.Load(typ)
 			assert.True(t, ok)
 			if !ok {
 				return
 			}
-			assert.Equal(t, tt.wantModel, cache.(*Model))
+			assert.Same(t, res, cache.(*Model))
 		})
+	}
+}
+
+func assertModelMetadata(t *testing.T, entity any, want, actual *Model) {
+	t.Helper()
+	if !assert.NotNil(t, actual) {
+		return
+	}
+	assert.Equal(t, want.tableName, actual.tableName)
+	assert.Len(t, actual.fieldMap, len(want.fieldMap))
+	assert.Len(t, actual.columnMap, len(want.fieldMap))
+
+	typ := reflect.TypeOf(entity)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+	for goName, wantField := range want.fieldMap {
+		actualField, ok := actual.fieldMap[goName]
+		if !assert.True(t, ok, "fieldMap should contain %q", goName) {
+			continue
+		}
+		structField, ok := typ.FieldByName(goName)
+		if !assert.True(t, ok, "struct should contain field %q", goName) {
+			continue
+		}
+		assert.Equal(t, goName, actualField.goName)
+		assert.Equal(t, wantField.colName, actualField.colName)
+		assert.Equal(t, structField.Type, actualField.typ)
+
+		columnField, ok := actual.columnMap[wantField.colName]
+		if assert.True(t, ok, "columnMap should contain %q", wantField.colName) {
+			assert.Same(t, actualField, columnField)
+		}
 	}
 }
 
@@ -210,5 +243,8 @@ func TestModelWithFieldName(t *testing.T) {
 	r := newRegistry()
 	m, err := r.Registry(&UserName{}, ModelWithFieldName("FirstName", "first_name_a"))
 	assert.NoError(t, err)
-	assert.Equal(t, "first_name_a", m.fields["FirstName"].colName)
+	assert.Equal(t, "first_name_a", m.fieldMap["FirstName"].colName)
+	_, ok := m.columnMap["first_name"]
+	assert.False(t, ok)
+	assert.Same(t, m.fieldMap["FirstName"], m.columnMap["first_name_a"])
 }

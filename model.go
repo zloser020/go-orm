@@ -19,13 +19,18 @@ type Registry interface {
 
 type Model struct {
 	tableName string
-	fields    map[string]*Field
+	// 字段名到字段定义的映射
+	fieldMap map[string]*Field
+	// 列名到字段定义的映射
+	columnMap map[string]*Field
 }
 
 type ModelOption func(*Model) error
 
 type Field struct {
+	goName  string
 	colName string
+	typ     reflect.Type
 }
 
 // registry 代表的是元数据的注册中心
@@ -94,6 +99,7 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 	elemType := Typ.Elem()
 	numFields := elemType.NumField()
 	fieldMap := make(map[string]*Field, numFields)
+	columnMap := make(map[string]*Field, numFields)
 	for i := 0; i < numFields; i++ {
 		fd := elemType.Field(i)
 		pair, err := r.parseTag(fd.Tag)
@@ -104,9 +110,15 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 		if colName == "" {
 			colName = underscoreName(fd.Name)
 		}
-		fieldMap[fd.Name] = &Field{
+
+		fdMeta := &Field{
 			colName: colName,
+			typ:     fd.Type,
+			goName:  fd.Name,
 		}
+
+		fieldMap[fd.Name] = fdMeta
+		columnMap[colName] = fdMeta
 	}
 	var tableName string
 	if tbl, ok := entity.(TableName); ok {
@@ -117,7 +129,8 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 	}
 	res := &Model{
 		tableName: tableName,
-		fields:    fieldMap,
+		fieldMap:  fieldMap,
+		columnMap: columnMap,
 	}
 	for _, opt := range opts {
 		err := opt(res)
@@ -141,11 +154,13 @@ func ModelWithTableName(tableName string) ModelOption {
 
 func ModelWithFieldName(field string, colName string) ModelOption {
 	return func(m *Model) error {
-		fd, ok := m.fields[field]
+		fd, ok := m.fieldMap[field]
 		if !ok {
 			return errs.NewErrUnkonwnField(field)
 		}
+		delete(m.columnMap, fd.colName)
 		fd.colName = colName
+		m.columnMap[colName] = fd
 		return nil
 	}
 }
