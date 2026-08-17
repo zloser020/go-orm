@@ -44,3 +44,15 @@ func TestDeleter_Build(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleter_BuildRepeatedly(t *testing.T) {
+	db := memoryDB(t)
+	builder := NewDeleter[TestModel](db).Where(C("Id").Eq("1"))
+
+	first, err := builder.Build()
+	assert.NoError(t, err)
+	second, err := builder.Build()
+	assert.NoError(t, err)
+
+	assert.Equal(t, first, second)
+}

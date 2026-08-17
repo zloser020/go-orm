@@ -12,6 +12,11 @@ type builder struct {
 	model *Model
 }
 
+func (b *builder) reset() {
+	b.sb.Reset()
+	b.args = nil
+}
+
 func (b *builder) buildPredicates(ps []Predicate) error {
 	p := ps[0]
 	for i := 1; i < len(ps); i++ {
@@ -53,12 +58,12 @@ func (b *builder) BuildExpression(expr Expression) error {
 
 	case Column:
 		// 字段校验
-		fd, ok := b.model.fieldMap[expr.name]
+		fd, ok := b.model.FieldMap[expr.name]
 		if !ok {
 			return errs.NewErrUnkonwnField(expr.name)
 		}
 		b.sb.WriteByte('`')
-		b.sb.WriteString(fd.colName)
+		b.sb.WriteString(fd.ColName)
 		b.sb.WriteByte('`')
 	case value:
 		b.sb.WriteByte('?')

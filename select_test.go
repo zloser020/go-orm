@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"context"
 	"database/sql"
 	"orm/internal/errs"
 	"testing"
@@ -110,6 +111,70 @@ func TestSelector_Build(t *testing.T) {
 	}
 }
 
+func TestSelector_BuildRepeatedly(t *testing.T) {
+	db := memoryDB(t)
+	builder := NewSelector[TestModel](db).Where(C("Age").Eq(18))
+
+	first, err := builder.Build()
+	require.NoError(t, err)
+	second, err := builder.Build()
+	require.NoError(t, err)
+
+	assert.Equal(t, first, second)
+}
+
+func TestSelector_Get(t *testing.T) {
+	testCases := []struct {
+		name string
+		opts []DBOption
+	}{
+		{name: "reflect"},
+		{name: "unsafe", opts: []DBOption{DBWithUnsafeValuer()}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := selectorTestDB(t, "get_"+tc.name, tc.opts...)
+			insertTestModels(t, db)
+
+			got, err := NewSelector[TestModel](db).
+				Where(C("Id").Eq(int64(1))).
+				Get(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, &TestModel{
+				Id:        1,
+				FirstName: "George",
+				Age:       18,
+				LastName:  &sql.NullString{String: "Wu", Valid: true},
+			}, got)
+		})
+	}
+}
+
+func TestSelector_GetMulti(t *testing.T) {
+	db := selectorTestDB(t, "get_multi")
+	insertTestModels(t, db)
+
+	got, err := NewSelector[TestModel](db).GetMulti(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	byID := make(map[int64]*TestModel, len(got))
+	for _, entity := range got {
+		byID[entity.Id] = entity
+	}
+	assert.Equal(t, "George", byID[1].FirstName)
+	assert.Equal(t, "Tom", byID[2].FirstName)
+}
+
+func TestSelector_GetNoRows(t *testing.T) {
+	db := selectorTestDB(t, "get_no_rows")
+
+	got, err := NewSelector[TestModel](db).Get(context.Background())
+	assert.ErrorIs(t, err, ErrNoRows)
+	assert.Nil(t, got)
+}
+
 type TestModel struct {
 	Id        int64
 	FirstName string
@@ -121,4 +186,31 @@ func memoryDB(t *testing.T) *DB {
 	db, err := Open("sqlite3", "file:test.db?cache=shared&mode=memory")
 	require.NoError(t, err)
 	return db
+}
+
+func selectorTestDB(t *testing.T, name string, opts ...DBOption) *DB {
+	t.Helper()
+	db, err := Open("sqlite3", "file:"+name+"?cache=shared&mode=memory", opts...)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.db.Close())
+	})
+	_, err = db.db.Exec(`
+		CREATE TABLE test_model (
+			id INTEGER,
+			first_name TEXT,
+			age INTEGER,
+			last_name TEXT
+		)`)
+	require.NoError(t, err)
+	return db
+}
+
+func insertTestModels(t *testing.T, db *DB) {
+	t.Helper()
+	_, err := db.db.Exec(`
+		INSERT INTO test_model(id, first_name, age, last_name)
+		VALUES (1, 'George', 18, 'Wu'), (2, 'Tom', 20, NULL)
+	`)
+	require.NoError(t, err)
 }

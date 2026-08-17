@@ -1,13 +1,17 @@
 package orm
 
-import "database/sql"
+import (
+	"database/sql"
+	"orm/internal/valuer"
+)
 
 type DBOption func(db *DB)
 
 // DB 是一个sql.db装饰器
 type DB struct {
-	registry *registry
-	db       *sql.DB
+	registry      Registry
+	db            *sql.DB
+	valuerCreator valuer.Creator
 }
 
 func Open(driver string, dataSourceName string, opts ...DBOption) (*DB, error) {
@@ -20,13 +24,26 @@ func Open(driver string, dataSourceName string, opts ...DBOption) (*DB, error) {
 
 func OpenDB(db *sql.DB, opts ...DBOption) (*DB, error) {
 	res := &DB{
-		registry: newRegistry(),
-		db:       db,
+		registry:      NewRegistry(),
+		db:            db,
+		valuerCreator: valuer.NewReflectValue,
 	}
 	for _, opt := range opts {
 		opt(res)
 	}
 	return res, nil
+}
+
+func DBWithReflectValuer() DBOption {
+	return func(db *DB) {
+		db.valuerCreator = valuer.NewReflectValue
+	}
+}
+
+func DBWithUnsafeValuer() DBOption {
+	return func(db *DB) {
+		db.valuerCreator = valuer.NewUnsafeValue
+	}
 }
 
 func MustOpen(driver string, dataSourceName string, opts ...DBOption) *DB {

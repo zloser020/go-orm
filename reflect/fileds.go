@@ -12,11 +12,11 @@ func IterateFields(entity any) (map[string]any, error) {
 
 	typ := reflect.TypeOf(entity)
 	val := reflect.ValueOf(entity)
-	if val.IsZero() {
-		return nil, errors.New("value cannot be zero")
-	}
 
 	for typ.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return nil, errors.New("value cannot be zero")
+		}
 		typ = typ.Elem()
 		val = val.Elem()
 	}
@@ -42,14 +42,39 @@ func IterateFields(entity any) (map[string]any, error) {
 }
 
 func SetField(entity any, field string, newVal any) error {
-	val := reflect.ValueOf(entity)
-	for val.Type().Kind() == reflect.Pointer {
-		val = val.Elem()
-	}
-	fieldVal := val.FieldByName(field)
-	if !fieldVal.CanSet() {
+	if entity == nil {
 		return errors.New("value cannot be set")
 	}
-	fieldVal.FieldByName(field).Set(reflect.ValueOf(newVal))
+	val := reflect.ValueOf(entity)
+	if val.Kind() != reflect.Pointer {
+		return errors.New("value cannot be set")
+	}
+	for val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return errors.New("value cannot be set")
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return errors.New("value cannot be set")
+	}
+	fieldVal := val.FieldByName(field)
+	if !fieldVal.IsValid() || !fieldVal.CanSet() {
+		return errors.New("value cannot be set")
+	}
+	newValue := reflect.ValueOf(newVal)
+	if !newValue.IsValid() {
+		switch fieldVal.Kind() {
+		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+			fieldVal.SetZero()
+			return nil
+		default:
+			return errors.New("value type mismatch")
+		}
+	}
+	if !newValue.Type().AssignableTo(fieldVal.Type()) {
+		return errors.New("value type mismatch")
+	}
+	fieldVal.Set(newValue)
 	return nil
 }

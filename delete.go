@@ -23,6 +23,7 @@ func NewDeleter[T any](db *DB) *Deleter[T] {
 }
 
 func (d *Deleter[T]) Build() (*Query, error) {
+	d.reset()
 	var err error
 	d.model, err = d.db.registry.Get(new(T))
 	if err != nil {
@@ -32,7 +33,7 @@ func (d *Deleter[T]) Build() (*Query, error) {
 	sb.WriteString("DELETE FROM ")
 	if d.tableName == "" {
 		sb.WriteByte('`')
-		sb.WriteString(d.model.tableName)
+		sb.WriteString(d.model.TableName)
 		sb.WriteByte('`')
 	} else {
 		sb.WriteByte('`')

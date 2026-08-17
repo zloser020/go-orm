@@ -1,7 +1,8 @@
-package orm
+package model
 
 import (
 	"orm/internal/errs"
+	"orm/internal/valuer"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,96 +13,84 @@ const (
 	tagKeyColumn = "column"
 )
 
+type TableName interface {
+	TableName() string
+}
+
 type Registry interface {
 	Get(val any) (*Model, error)
 	Register(val any, opts ...ModelOption) (*Model, error)
 }
 
 type Model struct {
-	tableName string
+	TableName string
 	// 字段名到字段定义的映射
-	fieldMap map[string]*Field
+	FieldMap map[string]*Field
 	// 列名到字段定义的映射
-	columnMap map[string]*Field
+	ColumnMap map[string]*Field
 }
 
 type ModelOption func(*Model) error
 
 type Field struct {
-	goName  string
-	colName string
-	typ     reflect.Type
+	GoName  string
+	ColName string
+	Typ     reflect.Type
+	Offset  uintptr
 }
 
 // registry 代表的是元数据的注册中心
 type registry struct {
-	// 读多写少 使用读写锁
-	// lock sync.RWMutex
-	// models map[reflect.Type]*Model
-
-	// 使用sync.map
 	models sync.Map
 }
+
+var _ Registry = (*registry)(nil)
 
 func newRegistry() *registry {
 	return &registry{}
 }
 
+func NewRegistry() Registry {
+	return newRegistry()
+}
+
 func (r *registry) Get(val any) (*Model, error) {
+	if val == nil {
+		return nil, errs.ErrPointerOnly
+	}
 	typ := reflect.TypeOf(val)
 	m, ok := r.models.Load(typ)
 	if ok {
 		return m.(*Model), nil
 	}
 	var err error
-	m, err = r.Registry(val)
+	m, err = r.Register(val)
 	if err != nil {
 		return nil, err
 	}
-	// 可能存在覆盖，影响有限
-	r.models.Store(typ, m)
 	return m.(*Model), nil
 }
 
-// 使用读写锁
-//func (r *registry) Get(val any) (*Model, error) {
-//	typ := reflect.TypeOf(val)
-//
-//	r.lock.RLock()
-//	m, ok := r.models[typ]
-//	r.lock.RUnlock()
-//	if ok {
-//		return m, nil
-//	}
-//
-//	r.lock.Lock()
-//	defer r.lock.Unlock()
-//	m, ok = r.models[typ]
-//	if ok {
-//		return m, nil
-//	}
-//	m, err := r.Registry(val)
-//	if err != nil {
-//		return nil, err
-//	}
-//	r.models[typ] = m
-//	return m, nil
-//}
-
 // 限制只支持一级指针
-func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
-	Typ := reflect.TypeOf(entity)
-
-	// 只支持一级指针
-	if Typ.Kind() != reflect.Ptr || Typ.Elem().Kind() != reflect.Struct {
+func (r *registry) Register(entity any, opts ...ModelOption) (*Model, error) {
+	if entity == nil {
 		return nil, errs.ErrPointerOnly
 	}
-	elemType := Typ.Elem()
+	typ := reflect.TypeOf(entity)
+
+	// 只支持一级指针
+	if typ.Kind() != reflect.Ptr || typ.Elem().Kind() != reflect.Struct {
+		return nil, errs.ErrPointerOnly
+	}
+	elemType := typ.Elem()
 	numFields := elemType.NumField()
 	fieldMap := make(map[string]*Field, numFields)
 	columnMap := make(map[string]*Field, numFields)
 	for i := 0; i < numFields; i++ {
 		fd := elemType.Field(i)
+		if !fd.IsExported() {
+			continue
+		}
 		pair, err := r.parseTag(fd.Tag)
 		if err != nil {
 			return nil, err
@@ -112,9 +101,10 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 		}
 
 		fdMeta := &Field{
-			colName: colName,
-			typ:     fd.Type,
-			goName:  fd.Name,
+			ColName: colName,
+			Typ:     fd.Type,
+			GoName:  fd.Name,
+			Offset:  uintptr(fd.Offset),
 		}
 
 		fieldMap[fd.Name] = fdMeta
@@ -128,9 +118,9 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 		tableName = underscoreName(elemType.Name())
 	}
 	res := &Model{
-		tableName: tableName,
-		fieldMap:  fieldMap,
-		columnMap: columnMap,
+		TableName: tableName,
+		FieldMap:  fieldMap,
+		ColumnMap: columnMap,
 	}
 	for _, opt := range opts {
 		err := opt(res)
@@ -138,29 +128,38 @@ func (r *registry) Registry(entity any, opts ...ModelOption) (*Model, error) {
 			return nil, err
 		}
 	}
-	r.models.Store(Typ, res)
+	r.models.Store(typ, res)
 	return res, nil
 }
 
-func ModelWithTableName(tableName string) ModelOption {
+func (m *Model) FieldByColumn(column string) (valuer.Field, bool) {
+	fd, ok := m.ColumnMap[column]
+	if !ok {
+		return valuer.Field{}, false
+	}
+	return valuer.Field{
+		GoName: fd.GoName,
+		Typ:    fd.Typ,
+		Offset: fd.Offset,
+	}, true
+}
+
+func WithTableName(tableName string) ModelOption {
 	return func(m *Model) error {
-		m.tableName = tableName
-		//if tableName == "" {
-		//	return err
-		//}
+		m.TableName = tableName
 		return nil
 	}
 }
 
-func ModelWithFieldName(field string, colName string) ModelOption {
+func WithFieldName(field string, colName string) ModelOption {
 	return func(m *Model) error {
-		fd, ok := m.fieldMap[field]
+		fd, ok := m.FieldMap[field]
 		if !ok {
 			return errs.NewErrUnkonwnField(field)
 		}
-		delete(m.columnMap, fd.colName)
-		fd.colName = colName
-		m.columnMap[colName] = fd
+		delete(m.ColumnMap, fd.ColName)
+		fd.ColName = colName
+		m.ColumnMap[colName] = fd
 		return nil
 	}
 }

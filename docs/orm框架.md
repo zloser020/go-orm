@@ -1,5 +1,13 @@
 # ORM 框架学习笔记
 
+## 专题导航
+
+ORM 实现会涉及一些可独立学习的 Go 与数据库知识，已拆分为专题文档：
+
+- [MySQL 数据库](mysql数据库.md)：事务隔离、MVCC、undo log 与 redo log。
+- [Go 反射与 unsafe](go-reflection-unsafe.md)：运行时类型、字段与方法、`unsafe.Pointer`、GC、内存对齐和字段偏移。
+- [Go 对象构造设计模式](go-design-patterns.md)：Builder、Functional Options、二者的适用场景及在 ORM 中的应用。
+
 ## 1. ORM 框架概览
 
 ORM 是 Object-Relational Mapping 的缩写，即对象关系映射。它用于在 Go 对象和关系型数据库之间进行转换。
@@ -233,18 +241,9 @@ SELECT 部分 + FROM 部分 + WHERE 部分 + 其他子句 → 完整 SQL
 
 当前项目也采用类似思路：`Selector` 负责组织 SELECT 查询，`Predicate` 表示查询条件，`BuildExpression` 递归构造条件表达式。
 
-### 2.2 Builder 模式
+### 2.2 当前项目中的 SQL Builder
 
-Builder（建造者）模式将复杂对象的构造过程拆成多个步骤，使调用方不必一次提供全部参数，而是逐步设置需要的部分，最后统一生成目标对象。
-
-它适合具有以下特点的对象：
-
-- 构造步骤较多。
-- 包含大量可选参数。
-- 不同参数之间存在组合关系。
-- 希望使用链式 API 提高可读性。
-
-SQL 正好符合这些特点。一条 SELECT 语句可能包含 `FROM`、`WHERE`、`GROUP BY`、`ORDER BY` 和 `LIMIT` 等部分，而且多数部分都是可选的。
+Builder 模式的通用原理、适用场景及与 Functional Options 的对比，见 [Go 对象构造设计模式](go-design-patterns.md)。本节只关注它在当前 ORM SQL 构造中的落地。
 
 ```text
 设置查询模型
@@ -283,8 +282,6 @@ query, err := (&Selector[TestModel]{}).
 ```
 
 这种设计将“如何表达查询”和“如何拼接 SQL”分离：调用方负责描述查询意图，Builder 负责处理拼接顺序、占位符和参数收集。以后增加 `OrderBy`、`Limit` 等能力时，只需为 Builder 增加新的构造步骤。
-
-需要注意，链式调用不是 Builder 模式的必要条件，只是一种常见写法。Builder 模式的关键是逐步收集构造信息，最后通过 `Build` 生成完整对象。
 
 ### 2.3 Where 多条件合并
 
@@ -332,261 +329,179 @@ ORDER BY ...
 LIMIT ...;
 ```
 
-## 3. 反射：获取并调用方法
+## 3. ORM 结果集与性能面试要点
 
-### 3.1 方法接收者
+### 3.1 ORM 如何处理数据库返回的数据
 
-使用反射遍历方法时，需要注意方法接收者：
+ORM 处理查询结果的核心是：**根据模型元数据，将数据库列映射到 Go 字段，为 `rows.Scan` 准备正确类型的接收地址。**
 
-- 输入是结构体值 `T`，只能获取值接收者 `func (t T) Method()` 的方法。
-- 输入是结构体指针 `*T`，可以获取值接收者和指针接收者的方法。
-- 通过 `reflect.Type.Method` 得到的方法函数，其第一个输入参数永远是接收者本身，后面才是方法声明的参数。
-- `NumMethod` 和 `Method` 只能获取导出方法。
+完整流程可以拆成以下步骤：
 
 ```text
-输入 User  → 获取 User 的值接收者方法
-输入 *User → 获取 User 和 *User 的方法
+执行 SQL
+   ↓
+获取结果集列名
+   ↓
+根据 ColumnMap 找到字段元数据
+   ↓
+为每列准备类型匹配的扫描目标
+   ↓
+rows.Scan 完成数据库值到 Go 值的转换
+   ↓
+将 Go 值写入模型字段
 ```
 
-例如：
+其中元数据至少需要提供：
+
+- 数据库列名。
+- Go 字段名或索引路径。
+- Go 字段类型。
+- 如果使用 `unsafe`，还需要字段偏移。
+
+`database/sql` 负责将驱动返回的值转换到 `Scan` 目标类型。ORM 的主要责任是找到正确字段，并传入正确的字段指针或临时值指针。
+
+### 3.2 使用反射处理结果集
+
+反射方案可以先为每一列创建对应类型的临时值：
 
 ```go
-func (u User) GetAge() int
-func (u *User) ChangeName(name string)
-```
+scanTargets := make([]any, len(columns))
+values := make([]reflect.Value, len(columns))
 
-传入 `User` 时只能找到 `GetAge`；传入 `*User` 时可以同时找到 `GetAge` 和 `ChangeName`。`ChangeName` 的反射输入参数依次为接收者 `*User` 和方法参数 `string`。
+for i, column := range columns {
+	field := model.ColumnMap[column]
+	value := reflect.New(field.Typ)
+	scanTargets[i] = value.Interface()
+	values[i] = value.Elem()
+}
 
-### 3.2 反射编程技巧
-
-- 读写具体数据使用 `reflect.Value`，读取类型信息使用 `reflect.Type`。
-- `T` 和 `*T` 在反射中是两种类型，操作前要确认是否为指针；通常使用 `Elem()` 获取指针指向的值或类型。
-- 指针类型主要用于判断指向类型和获取指针方法集；分析结构体字段时，一般操作其 `Elem()`。
-- 反射 API 经常在类型不匹配、值不可修改或操作不支持时触发 panic，因此需要充分测试，并在调用前使用 `Kind`、`CanSet` 等方法检查。
-- 数组和切片分别对应 `reflect.Array` 和 `reflect.Slice`，不能当成同一种类型判断。
-- 字段和方法需要使用不同的反射 API，例如 `Field` 与 `Method`。
-
-#### Value、Type 与原始对象的关系
-
-```text
-&user
-  └── reflect.ValueOf(&user)       指针 Value
-          ├── Type()               → *User 的 Type
-          └── Elem()               → User 的 Value，可读写字段
-                  └── Type()       → User 的 Type
-
-reflect.TypeOf(&user)              *User 的 Type
-  └── Elem()                       → User 的 Type
-```
-
-核心关系如下：
-
-- `reflect.ValueOf` 得到值的反射表示，用于读取或修改数据。
-- `reflect.TypeOf` 得到类型的反射表示，只描述类型信息。
-- `Value.Type()` 可以从 Value 获取对应的 Type。
-- 对指针调用 `Elem()`，可以从 `*User` 进入其指向的 `User`。
-- 若要修改结构体字段，应传入 `&user`，再通过 `ValueOf(&user).Elem()` 获得可设置的结构体 Value。
-
-### 3.3 Map 遍历顺序
-
-Go 的 map 是无序的，`MapRange` 和 `MapKeys` 都不保证返回顺序。因此测试 map 遍历结果时，不应直接比较切片顺序，而应比较完整的键值关系；如果业务需要固定顺序，则必须先对 key 排序。
-
-### 3.4 反射面试要点
-
-#### 什么是反射
-
-反射是程序在运行期间描述类型和值，并间接读取或操作对象的能力。Go 主要通过 `reflect.Type` 获取类型信息，通过 `reflect.Value` 操作具体值。
-
-#### 反射有哪些使用场景
-
-反射常用于无法在编译期确定具体类型的通用框架，例如：
-
-- ORM 的模型与数据库字段映射。
-- JSON 等序列化和反序列化。
-- 依赖注入和配置解析。
-- Web 框架中的参数绑定。
-
-#### 能否通过反射修改方法
-
-不能。Go 的反射 API 可以查找和调用方法，但不能修改方法实现，Go runtime 也没有提供相应接口。
-
-#### 什么样的字段可以被反射修改
-
-可以使用 `CanSet()` 判断值能否修改。通常需要传入对象指针，再通过 `Elem()` 得到可寻址的结构体值；字段还必须是可设置的导出字段。
-
-```go
-val := reflect.ValueOf(&user).Elem()
-Field := val.FieldByName("Name")
-if Field.CanSet() {
-	Field.SetString("Tom")
+if err := rows.Scan(scanTargets...); err != nil {
+	return err
 }
 ```
 
-直接传入结构体值通常只能读取，不能修改：
-
-```text
-reflect.ValueOf(user)         → 通常不可设置
-reflect.ValueOf(&user).Elem() → 可寻址，再通过 CanSet 判断
-```
-
-## 4. MySQL 事务隔离级别
-
-事务隔离级别用来规定并发事务之间的数据可见性。隔离性越强，并发异常越少，但通常也会付出更多的锁等待或并发性成本。
-
-MySQL 支持四种标准隔离级别，从弱到强依次为：
-
-```text
-READ UNCOMMITTED
-        ↓
-READ COMMITTED
-        ↓
-REPEATABLE READ
-        ↓
-SERIALIZABLE
-```
-
-### 4.1 并发读异常
-
-#### 脏读
-
-一个事务读到了另一个事务尚未提交的修改。如果后者回滚，前者读到的就是从未真正生效的数据。
-
-#### 不可重复读
-
-同一事务使用相同条件多次读取同一行，由于其他事务在两次读取之间修改并提交了该行，导致两次读到的值不同。
-
-#### 幻读
-
-同一事务使用相同范围条件多次查询，由于其他事务插入或删除了符合条件的记录并提交，导致结果集的行数发生变化。
-
-不可重复读关注的是“同一行的值变了”，幻读关注的是“符合范围条件的行变多或变少了”。
-
-### 4.2 四种隔离级别
-
-| 隔离级别 | 脏读 | 不可重复读 | 幻读 | 特点 |
-| --- | --- | --- | --- | --- |
-| 未提交读（`READ UNCOMMITTED`） | 可能 | 可能 | 可能 | 隔离性最弱，可读取其他事务未提交的修改 |
-| 已提交读（`READ COMMITTED`） | 避免 | 可能 | 可能 | 每次一致性读通常可以看到该读操作开始前已提交的数据 |
-| 可重复读（`REPEATABLE READ`） | 避免 | 避免 | SQL 标准下仍可能 | 事务内多次一致性读使用稳定的数据视图 |
-| 串行化（`SERIALIZABLE`） | 避免 | 避免 | 避免 | 隔离性最强，事务效果如同串行执行，并发性最低 |
-
-### 4.3 MySQL 默认隔离级别
-
-MySQL InnoDB 的默认事务隔离级别是可重复读（`REPEATABLE READ`）。
-
-InnoDB 主要通过 MVCC 提供一致性非锁定读；对于锁定读和范围更新，还会使用记录锁、间隙锁和 Next-Key Lock 等机制限制其他事务向相关范围插入记录。因此，MySQL InnoDB 在可重复读下对幻读的处理比 SQL 标准的最低要求更强。
-
-但是，快照读和当前读的可见性与加锁方式不同，不应简单记成“可重复读在所有场景下都绝对不会出现幻读”。
-
-### 4.4 设置隔离级别
-
-MySQL 中可以设置会话后续事务的隔离级别：
-
-```sql
-SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
-```
-
-Go 的 `database/sql` 可以通过 `sql.TxOptions` 指定隔离级别：
+扫描成功后，再根据字段元数据将临时值写入目标结构体：
 
 ```go
-tx, err := db.BeginTx(ctx, &sql.TxOptions{
-	Isolation: sql.LevelRepeatableRead,
-})
+entityValue := reflect.ValueOf(entity).Elem()
+for i, column := range columns {
+	field := model.ColumnMap[column]
+	entityValue.FieldByName(field.GoName).Set(values[i])
+}
 ```
 
-具体驱动和数据库是否支持某个隔离级别，需要根据其实现确认。ORM 的事务 API 最终也是将这类选项传递给底层数据库驱动。
+实际实现中必须检查：
 
-### 4.5 如何选择
+- `entity` 是否为非空结构体指针。
+- 列名是否存在于元数据中。
+- 字段是否存在且 `CanSet()` 为 `true`。
+- 临时值类型与目标字段类型是否一致。
+- `rows.Scan`、`rows.Err()` 和 `rows.Close()` 是否正确处理。
 
-- 一般业务优先使用数据库默认级别，不要在没有具体问题时随意调整。
-- 如果更希望每条查询看到已提交的最新数据，可考虑 `READ COMMITTED`。
-- 如果事务内的多次读需要保持稳定视图，可使用 `REPEATABLE READ`。
-- 只有在业务确实需要强串行化语义，且能接受锁等待和并发度下降时，才考虑 `SERIALIZABLE`。
+反射方案语义清晰、安全性更好，适合先实现为默认方案。
 
-隔离级别不会自动解决所有并发写问题。对于丢失更新、库存扣减等场景，还需要结合条件更新、乐观锁或 `SELECT ... FOR UPDATE` 等机制。
+### 3.3 使用 unsafe 处理结果集
 
-### 4.6 事务隔离级别面试要点
+`unsafe` 方案不再通过字段名动态定位字段，而是使用已缓存的字段偏移直接计算目标地址：
 
-回答事务隔离级别问题时，可以按以下顺序展开：
+```go
+entityAddress := reflect.ValueOf(entity).UnsafePointer()
 
-1. MySQL 支持未提交读、已提交读、可重复读和串行化四种隔离级别。
-2. 不同隔离级别主要考察脏读、不可重复读和幻读。
-3. MySQL InnoDB 默认使用可重复读。
-4. InnoDB 通过 MVCC 提供一致性读，并通过 Next-Key Lock 等锁机制防止锁定范围内插入新记录。
-5. 如果继续追问底层实现，再说明 Read View、行记录的版本信息、undo log 和 redo log。
+for i, column := range columns {
+	field := model.ColumnMap[column]
+	fieldAddress := unsafe.Add(entityAddress, field.Offset)
+	fieldPointer := reflect.NewAt(field.Typ, fieldAddress)
+	scanTargets[i] = fieldPointer.Interface()
+}
 
-一个简短的面试回答可以是：
+err := rows.Scan(scanTargets...)
+runtime.KeepAlive(entity)
+return err
+```
 
-> MySQL 支持四种事务隔离级别，InnoDB 默认是可重复读。隔离级别主要解决脏读、不可重复读和幻读。InnoDB 的一致性读主要由 MVCC 实现，锁定读则结合记录锁、间隙锁和 Next-Key Lock 保护查询范围。
+这里不是“在目标地址额外创建了一个新对象”。`reflect.NewAt` 是使用已知类型解释现有内存地址，并生成指向该地址的反射值。`rows.Scan` 最终直接将数据写入模型字段。
 
-#### InnoDB 可重复读是否会出现幻读
+`unsafe` 方案必须保证：
 
-面试中常见的简化结论是“InnoDB 在可重复读下不会出现幻读”，但完整回答需要区分两种读：
+- 对象的实际类型与元数据一致。
+- 偏移来自同一个结构体类型。
+- 字段类型、对齐和内存边界正确。
+- 对象在扫描期间保持存活。
+- 代码通过 `go vet`、`checkptr` 和完整测试。
 
-- **快照读**：普通 `SELECT` 通过 MVCC 读取一致性视图，事务内重复查询通常不会看到其他事务新提交的行。
-- **当前读**：`SELECT ... FOR UPDATE`、`UPDATE` 和 `DELETE` 等需要读取最新已提交版本，InnoDB 在索引范围上使用 Next-Key Lock 阻止其他事务插入会影响结果集的记录。
+详细的指针、GC 与反射原理见 [Go 反射与 unsafe 学习笔记](go-reflection-unsafe.md)。
 
-因此，更准确的说法是：**InnoDB 在可重复读下，通过 MVCC 和 Next-Key Lock 分别处理快照读和锁定读中的幻读问题。**
+### 3.4 使用 unsafe 有什么优点
 
-### 4.7 MVCC、undo log 与 redo log
+`unsafe` 的潜在优势是减少结果映射热路径中的一部分动态工作，例如：
 
-#### MVCC
+- 根据字段名调用 `FieldByName`。
+- 创建临时反射值，再二次赋值给结构体。
+- 重复执行部分类型和可设置性检查。
 
-MVCC 是 Multi-Version Concurrency Control，即多版本并发控制。它使同一行数据在逻辑上可以存在多个历史版本，读事务根据可见性规则选择自己能看到的版本，从而降低读写之间的锁冲突。
+但“使用 `unsafe` 一定更快、CPU 和内存消耗一定更少”并不严谨：
 
-InnoDB 的行记录包含用于版本判断的隐藏信息，其中重要的有：
+- `reflect.NewAt`、接口装箱和 `rows.Scan` 仍然有开销。
+- 数据库驱动转换值的开销可能高于字段定位开销。
+- 查询总时间可能主要消耗在网络和数据库执行上。
+- 不同 Go 版本、驱动、数据类型和数据量会导致不同结果。
 
-- 最近修改该行的事务 ID。
-- 指向 undo log 中上一个历史版本的回滚指针。
+因此应使用 benchmark 同时比较执行时间和内存分配：
+
+```bash
+go test -bench=. -benchmem ./...
+```
+
+只有测量证明结果集映射是真实瓶颈时，才值得引入 `unsafe` 的额外复杂度。
+
+### 3.5 ORM 的性能瓶颈在哪里
+
+从 ORM 框架自身看，主要开销可以分为两类：
+
+1. **SQL 构造**：遍历表达式、校验字段、拼接 SQL 并收集参数。
+2. **结果集映射**：列名匹配、驱动类型转换、反射值创建和结构体赋值。
+
+但对于一次完整的数据库请求，常见的更大瓶颈还包括：
+
+- 数据库查询计划和 SQL 执行。
+- 索引缺失或回表、排序等高成本操作。
+- 锁等待和事务冲突。
+- 应用与数据库之间的网络往返。
+- 返回行数过多、查询了不需要的列。
+- N+1 查询和过多的数据库往返。
+
+优化时应先通过慢查询、执行计划、trace 和 profile 确认瓶颈，而不是默认认为 ORM 的反射就是最大问题。
+
+#### SQL 构造如何优化
+
+- 缓存模型元数据，避免重复反射解析。
+- 使用 `strings.Builder` 或 `bytes.Buffer` 减少字符串拼接分配。
+- 预分配参数切片容量。
+- 避免重复构造和遍历相同的表达式。
+- 对稳定查询考虑预编译语句，但需要评估驱动和数据库端的实际收益。
+
+buffer pool 可能减少 Buffer 对象分配，但不是无条件的优化：池化对象需要正确重置，可能长期持有过大的底层内存，也可能增加管理成本。应在 profile 显示 SQL 构造分配确实显著时再考虑。
+
+#### 结果集处理如何优化
+
+- 缓存列名到字段元数据的映射。
+- 缓存字段索引路径或字节偏移，避免每行调用 `FieldByName`。
+- 仅查询实际需要的列，避免无条件使用 `SELECT *`。
+- 使用批量查询和分页，控制单次返回数据量。
+- 减少不必要的临时值、接口装箱和切片分配。
+- 必要时再用 `unsafe` 优化已被证明的热路径。
+
+### 3.6 面试回答模板
+
+> ORM 处理结果集时，先获取列名，再根据模型元数据找到对应的 Go 字段和类型，为 `rows.Scan` 准备扫描目标。反射方案通常先扫描到临时值，再写入结构体；unsafe 方案可以根据对象起始地址和字段偏移获得字段指针，让 `Scan` 直接写入字段。unsafe 可能减少字段查找和临时值开销，但必须通过 benchmark 证明收益，并承担类型、对齐、边界和对象生命周期风险。ORM 性能瓶颈要分层看：框架内部包括 SQL 构造和结果集映射，完整请求则往往更受数据库执行、索引、锁等待、网络往返和返回数据量影响，应先测量再优化。
+
+面试时可以记住 ORM 的三个核心：
 
 ```text
-当前行版本
-    │ 回滚指针
-    ↓
-undo log 中的上一版本
-    │
-    ↓
-更早的行版本
+构造 SQL → 设计并缓存元数据 → 处理结果集
 ```
 
-#### Read View
-
-Read View 是一致性读用来判断数据版本是否可见的快照。它会记录创建快照时系统中的活跃事务信息。读取某行时，InnoDB 将行版本的事务 ID 与 Read View 比较：
-
-- 如果当前版本可见，就直接返回。
-- 如果当前版本不可见，就沿 undo log 版本链查找可见的历史版本。
-
-`READ COMMITTED` 和 `REPEATABLE READ` 的关键区别之一是 Read View 的创建时机：
-
-- `READ COMMITTED` 通常在每次一致性读时创建新的 Read View，因此后续查询可以看到其他事务新提交的数据。
-- `REPEATABLE READ` 通常在事务的第一次一致性读时创建 Read View，后续一致性读复用它，因此能够保持可重复读。
-
-#### undo log
-
-undo log 保存用于撤销数据修改的信息，主要有两个作用：
-
-1. **事务回滚**：事务失败或主动回滚时，根据 undo log 将数据恢复到修改前的状态。
-2. **MVCC 历史版本**：一致性读可以沿版本链找到对当前事务可见的历史数据。
-
-#### redo log
-
-redo log 记录 InnoDB 对数据页所做的物理修改，用于崩溃恢复和保证已提交事务的持久性。数据页可以先在内存中修改，再延后写回数据文件；只要对应 redo log 已按策略持久化，数据库异常重启后就可以重放日志恢复修改。
-
-| 机制 | 主要职责 | 关键作用 |
-| --- | --- | --- |
-| MVCC | 利用多版本和可见性规则完成一致性读 | 降低读写冲突 |
-| undo log | 保存撤销信息和历史版本 | 事务回滚、MVCC |
-| redo log | 记录对数据页的修改 | 崩溃恢复、持久性 |
-
-可以简化记忆为：
-
-```text
-MVCC：决定读哪个版本
-undo log：提供旧版本并支持回滚
-redo log：保证已提交修改在崩溃后可恢复
-```
-
-## 5. 学习要点
+## 4. 学习路线
 
 后续实现 ORM 框架时，可以重点学习：
 

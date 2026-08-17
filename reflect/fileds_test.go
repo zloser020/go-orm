@@ -32,6 +32,14 @@ func TestIterateFields(t *testing.T) {
 			},
 		},
 		{
+			name:   "zero struct",
+			entity: User{},
+			wantRes: map[string]any{
+				"Name": "",
+				"age":  0,
+			},
+		},
+		{
 			name:    "basic type",
 			entity:  18,
 			wantErr: errors.New("entity must be a struct"),

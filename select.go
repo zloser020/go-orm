@@ -2,8 +2,6 @@ package orm
 
 import (
 	"context"
-	"orm/internal/errs"
-	"reflect"
 	"strings"
 )
 
@@ -26,6 +24,7 @@ func NewSelector[T any](db *DB) *Selector[T] {
 }
 
 func (s *Selector[T]) Build() (*Query, error) {
+	s.reset()
 	var err error
 	s.model, err = s.db.registry.Get(new(T))
 	if err != nil {
@@ -35,7 +34,7 @@ func (s *Selector[T]) Build() (*Query, error) {
 	sb.WriteString("SELECT * FROM ")
 	if s.tableName == "" {
 		sb.WriteByte('`')
-		sb.WriteString(s.model.tableName)
+		sb.WriteString(s.model.TableName)
 		sb.WriteByte('`')
 	} else {
 		sb.WriteString(s.tableName)
@@ -77,61 +76,46 @@ func (s *Selector[T]) Get(ctx context.Context) (*T, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	if !rows.Next() {
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
 		return nil, ErrNoRows
 	}
 
-	cs, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
 	tp := new(T)
-	vals := make([]any, len(cs))
-	valElem := make([]reflect.Value, len(cs))
-	for _, c := range cs {
-		fd, ok := s.model.columnMap[c]
-		if !ok {
-			return nil, errs.NewErrUnkonwnColumn(c)
-		}
-
-		val := reflect.New(fd.typ)
-		vals = append(vals, val.Interface())
-		valElem = append(valElem, val.Elem())
-
-	}
-
-	err = rows.Scan(vals...)
+	val := s.db.valuerCreator(s.model, tp)
+	err = val.SetColumn(rows)
 	if err != nil {
 		return nil, err
-	}
-	tpValueElem := reflect.ValueOf(tp).Elem()
-	for i, c := range cs {
-		fd, ok := s.model.columnMap[c]
-		if !ok {
-			return nil, errs.NewErrUnkonwnColumn(c)
-		}
-
-		if fd.colName == c {
-			tpValueElem.FieldByName(fd.goName).Set(valElem[i])
-		}
 	}
 	return tp, nil
 }
 
 func (s *Selector[T]) GetMulti(ctx context.Context) ([]*T, error) {
-	//q, err := s.Build()
-	//if err != nil {
-	//	return nil, err
-	//}
-	//db := s.db.db
-	//rows, err := db.QueryContext(ctx, q.SQL, q.Args...)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//for rows.Next() {
-	//
-	//}
-	panic("unreachable")
+	q, err := s.Build()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.db.QueryContext(ctx, q.SQL, q.Args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make([]*T, 0)
+	for rows.Next() {
+		entity := new(T)
+		val := s.db.valuerCreator(s.model, entity)
+		if err = val.SetColumn(rows); err != nil {
+			return nil, err
+		}
+		res = append(res, entity)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
